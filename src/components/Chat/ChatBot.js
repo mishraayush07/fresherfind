@@ -8,6 +8,7 @@ export default function ChatBot() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
   const [currentModel, setCurrentModel] = useState("gemini-1.5-flash-latest");
+  const [chatState, setChatState] = useState("initial"); // initial, collecting-info, showing-results
   const messagesEndRef = useRef(null);
 
   // Scroll to bottom of chat whenever messages change
@@ -97,6 +98,9 @@ export default function ChatBot() {
       
       // Update the messages state with the assistant's response
       setMessages((prevMessages) => [...prevMessages, assistantMessage]);
+      
+      // Update chat state based on conversation progress
+      updateChatState(assistantContent);
     } catch (err) {
       console.error('Error in chat:', err);
       
@@ -119,10 +123,62 @@ export default function ChatBot() {
     }
   };
 
+  // Function to update chat state based on conversation progress
+  const updateChatState = (assistantContent) => {
+    if (messages.length <= 2) {
+      setChatState("collecting-info");
+    } else if (assistantContent.includes("Here are the details:") || 
+              (assistantContent.includes("found") && assistantContent.includes("listings"))) {
+      setChatState("showing-results");
+    }
+  };
+
   const retryLastMessage = () => {
     if (messages.length > 0 && messages[messages.length - 1].role === 'user') {
       setInput(messages[messages.length - 1].content);
     }
+  };
+
+  // Format message content with Markdown-like syntax
+  const formatMessageContent = (content) => {
+    // Check if this is a listing result message
+    if (content.includes("**") && content.includes("Here are the details:")) {
+      return (
+        <div className="listing-results">
+          {content.split('\n\n').map((paragraph, idx) => {
+            // Check if this paragraph is a listing item
+            if (paragraph.startsWith('**')) {
+              const lines = paragraph.split('\n');
+              const title = lines[0].replace(/\*\*/g, '');
+              
+              return (
+                <div key={idx} className="listing-item p-3 mb-3 bg-white rounded-lg shadow-sm border border-gray-100">
+                  <h4 className="font-bold text-blue-700">{title}</h4>
+                  {lines.slice(1).map((line, lineIdx) => {
+                    if (line.includes('📍')) {
+                      return <p key={lineIdx} className="text-gray-700">{line}</p>;
+                    } else if (line.includes('💰')) {
+                      return <p key={lineIdx} className="font-semibold text-green-700">{line}</p>;
+                    } else if (line.includes('✨')) {
+                      return <p key={lineIdx} className="text-gray-600">{line}</p>;
+                    } else if (line.includes('📞')) {
+                      return <p key={lineIdx} className="text-blue-600">{line}</p>;
+                    } else {
+                      return <p key={lineIdx}>{line}</p>;
+                    }
+                  })}
+                </div>
+              );
+            } else {
+              return <p key={idx} className="mb-2">{paragraph}</p>;
+            }
+          })}
+        </div>
+      );
+    }
+    
+    // Regular message formatting
+    return <span>{content}</span>;
   };
 
   return (
@@ -170,7 +226,10 @@ export default function ChatBot() {
                     : 'bg-white text-gray-800 border border-gray-200'
                 } max-w-[85%] shadow-sm`}
               >
-                {message.content}
+                {message.role === 'assistant' 
+                  ? formatMessageContent(message.content)
+                  : message.content
+                }
               </div>
             </div>
           ))
@@ -208,7 +267,7 @@ export default function ChatBot() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             className="flex-1 p-2 border rounded-l-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-            placeholder="Type your message..."
+            placeholder={chatState === "initial" ? "Hi! I'm looking for accommodation..." : "Type your message..."}
             disabled={isLoading}
           />
           <button
