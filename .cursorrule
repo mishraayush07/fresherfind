@@ -1,0 +1,19 @@
+rules:
+  - name: Use JSX Only
+    condition: |
+      file.extension == "jsx"
+  - name: Use App Directory
+    condition: |
+      file.path.startsWith("/app")
+  - name: Use TailwindCSS
+    condition: |
+      file.contains("className") and "tailwind"
+  - name: Prisma ORM
+    condition: |
+      file.path.endsWith("schema.prisma") or file.contains("@prisma/client")
+  - name: Database Is MongoDB
+    condition: |
+      file.contains("mongodb+srv")
+  - name: Component Convention
+    condition: |
+      file.path.includes("/components") and file.extension == "jsx"
