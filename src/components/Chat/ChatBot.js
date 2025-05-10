@@ -130,6 +130,10 @@ export default function ChatBot() {
     } else if (assistantContent.includes("Here are the details:") || 
               (assistantContent.includes("found") && assistantContent.includes("listings"))) {
       setChatState("showing-results");
+    } else if (assistantContent.includes("specific area") || 
+              assistantContent.includes("landmark") || 
+              assistantContent.includes("near")) {
+      setChatState("asking-location");
     }
   };
 
@@ -161,6 +165,8 @@ export default function ChatBot() {
                       return <p key={lineIdx} className="font-semibold text-green-700">{line}</p>;
                     } else if (line.includes('✨')) {
                       return <p key={lineIdx} className="text-gray-600">{line}</p>;
+                    } else if (line.includes('🏙️')) {
+                      return <p key={lineIdx} className="text-indigo-600 font-medium">{line}</p>;
                     } else if (line.includes('📞')) {
                       return <p key={lineIdx} className="text-blue-600">{line}</p>;
                     } else {
@@ -179,6 +185,22 @@ export default function ChatBot() {
     
     // Regular message formatting
     return <span>{content}</span>;
+  };
+
+  // Generate placeholder text based on chat state
+  const getPlaceholderText = () => {
+    switch (chatState) {
+      case "initial":
+        return "Hi! I'm looking for accommodation...";
+      case "collecting-info":
+        return "Tell me your name, preferences, or city...";
+      case "asking-location":
+        return "Enter a nearby location (university, landmark, etc.)...";
+      case "showing-results":
+        return "Ask about a specific listing or search near a location...";
+      default:
+        return "Type your message...";
+    }
   };
 
   return (
@@ -201,6 +223,11 @@ export default function ChatBot() {
           </svg>
           Chat Assistant
         </span>
+        {chatState === "showing-results" && (
+          <span className="text-xs bg-white text-blue-600 px-2 py-1 rounded-full">
+            Showing Listings
+          </span>
+        )}
       </div>
       
       <div className="flex-1 p-4 overflow-y-auto bg-gray-50">
@@ -267,7 +294,7 @@ export default function ChatBot() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             className="flex-1 p-2 border rounded-l-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-            placeholder={chatState === "initial" ? "Hi! I'm looking for accommodation..." : "Type your message..."}
+            placeholder={getPlaceholderText()}
             disabled={isLoading}
           />
           <button
@@ -291,6 +318,12 @@ export default function ChatBot() {
             </svg>
           </button>
         </div>
+        
+        {chatState === "showing-results" && (
+          <div className="mt-2 text-xs text-gray-500 text-center">
+            Tip: You can ask to find listings near specific locations like "near Delhi University" or "close to Koramangala"
+          </div>
+        )}
       </form>
     </div>
   );

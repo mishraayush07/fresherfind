@@ -28,6 +28,7 @@ model Listing {
   contactName String
   contactPhone String
   contactEmail String?
+  nearbyLocations String[] // Added field for nearby locations like colleges, landmarks, etc.
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   coordinates Coordinates?
