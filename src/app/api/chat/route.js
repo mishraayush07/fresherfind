@@ -2,96 +2,8 @@ import { NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { PrismaClient } from '@prisma/client';
 
-// Mock data for fallback when database is unavailable
-const MOCK_LISTINGS = {
-  hostel: [
-    {
-      id: "mock1",
-      title: "Student Comfort Hostel",
-      description: "Comfortable hostel for students with all amenities",
-      price: 8000,
-      location: "Near University Campus",
-      address: "123 College Road",
-      city: "Delhi",
-      type: "hostel",
-      amenities: ["WiFi", "Laundry", "Mess", "Security"],
-      images: ["/images/hostel1.jpg"],
-      contactName: "Hostel Manager",
-      contactPhone: "9876543210",
-      nearbyLocations: ["Delhi University", "Metro Station", "Market"]
-    },
-    {
-      id: "mock2",
-      title: "City Center PG",
-      description: "Well-maintained PG in the heart of the city",
-      price: 9500,
-      location: "City Center",
-      address: "45 Main Street",
-      city: "Mumbai",
-      type: "pg",
-      amenities: ["WiFi", "AC", "Food", "Parking"],
-      images: ["/images/pg1.jpg"],
-      contactName: "PG Owner",
-      contactPhone: "9876543211",
-      nearbyLocations: ["Mumbai University", "Railway Station", "Shopping Mall"]
-    }
-  ],
-  pg: [
-    {
-      id: "mock3",
-      title: "Comfort PG for Students",
-      description: "Affordable PG with good facilities",
-      price: 7500,
-      location: "College Area",
-      address: "78 College Lane",
-      city: "Bangalore",
-      type: "pg",
-      amenities: ["WiFi", "Food", "Cleaning", "TV"],
-      images: ["/images/pg2.jpg"],
-      contactName: "PG Manager",
-      contactPhone: "9876543212",
-      nearbyLocations: ["Bangalore University", "Bus Stop", "Park"]
-    }
-  ],
-  mess: [
-    {
-      id: "mock4",
-      title: "Homely Food Mess",
-      description: "Authentic home-style food service",
-      price: 3000,
-      location: "Residential Area",
-      address: "34 Food Street",
-      city: "Pune",
-      type: "mess",
-      amenities: [],
-      images: ["/images/mess1.jpg"],
-      contactName: "Mess Owner",
-      contactPhone: "9876543213",
-      nearbyLocations: ["Pune University", "Hospital", "Market"]
-    }
-  ],
-  flat: [
-    {
-      id: "mock5",
-      title: "2BHK Apartment",
-      description: "Spacious apartment for rent",
-      price: 15000,
-      location: "Suburban Area",
-      address: "56 Housing Society",
-      city: "Hyderabad",
-      type: "flat",
-      amenities: ["WiFi", "AC", "Parking", "Security", "Gym"],
-      images: ["/images/flat1.jpg"],
-      contactName: "Apartment Owner",
-      contactPhone: "9876543214",
-      nearbyLocations: ["Hyderabad University", "IT Park", "Shopping Mall"]
-    }
-  ]
-};
-
 // Initialize Prisma client with error handling
 let prisma;
-let isPrismaAvailable = true;
 
 try {
   // Prevent multiple instances in development with hot reloading
@@ -105,7 +17,6 @@ try {
   }
 } catch (error) {
   console.error('Failed to initialize Prisma client:', error);
-  isPrismaAvailable = false;
 }
 
 // Initialize the Google Generative AI with API key
@@ -147,9 +58,6 @@ export async function POST(request) {
     const genAI = new GoogleGenerativeAI(apiKey);
 
     // Get the Gemini model
-    // Use models like:
-    // - gemini-1.5-flash-latest (fastest)
-    // - gemini-1.5-pro-latest (most capable)
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
 
     // Format messages for Gemini (format differs from OpenAI/Groq format)
@@ -158,117 +66,89 @@ export async function POST(request) {
     // Get the last user message
     const lastMessage = formattedMessages.length > 0 ? formattedMessages[formattedMessages.length - 1].parts[0].text : "";
     
+    // Extract user info and query parameters from conversation
+    const userInfo = extractUserInfo(messages);
+    
     // Create a chat session
     const chat = model.startChat({
-      history: formattedMessages.slice(0, -1),
       generationConfig: {
         temperature: 0.7,
         maxOutputTokens: 1000,
       },
     });
 
-    // Check if we need to handle special commands or queries
+    // Response text to be sent back to the user
     let responseText = "";
     
-    // Extract user info and query parameters from conversation
-    const userInfo = extractUserInfo(messages);
+    // For first-time users, provide a welcome message
+    if (messages.length <= 1) {
+      responseText = "Hi there! I'm your accommodation search assistant. I can help you find hostels, PGs, flats, and mess facilities. What type of accommodation are you looking for and in which city?";
+      
+      return NextResponse.json({
+        model: "gemini-1.5-flash-latest",
+        choices: [
+          {
+            message: {
+              role: "assistant",
+              content: responseText,
+            },
+          },
+        ],
+      });
+    }
     
-    // Check if database is available
-    if (!isPrismaAvailable) {
-      console.warn('Prisma client is not available, using mock data');
-      
-      // Add a note to the system context
-      const dbUnavailableContext = "Note: The database is currently unavailable. Using sample listings data instead.";
-      const result = await chat.sendMessage(dbUnavailableContext + "\n\n" + lastMessage);
-      const response = await result.response;
-      responseText = response.text();
-      
-      // If we have enough user info, use mock data
-      if (userInfo.name && userInfo.city && userInfo.lookingFor) {
-        const mockListings = getMockListings(userInfo);
-        responseText = await generateResponseWithListings(chat, lastMessage, userInfo, mockListings);
-      } else {
-        // Continue the normal conversation flow to collect user info
-        if (messages.length <= 2) {
-          responseText = "Hi there! I'd like to help you find the perfect accommodation. Could you please tell me your name?";
-        } else if (!userInfo.name) {
-          responseText = "Great! What's your name so I can personalize your experience?";
-        } else if (!userInfo.lookingFor) {
-          responseText = `Thanks, ${userInfo.name}! What type of accommodation are you looking for? (hostel, PG, flat, or mess)`;
-        } else if (!userInfo.city) {
-          responseText = `Excellent, ${userInfo.name}! In which city are you looking for ${userInfo.lookingFor}?`;
-        }
+    // Check if we can extract accommodation type and city from the message
+    const lastUserMessage = lastMessage.toLowerCase();
+    
+    // Try to extract city from the message if not already known
+    if (!userInfo.city) {
+      const cityPattern = /\b(mumbai|delhi|bangalore|pune|hyderabad|chennai|kolkata|ahmedabad|jaipur|surat|lucknow|kanpur|nagpur|indore|thane|bhopal|coimbatore|kochi)\b/i;
+      const cityMatch = lastUserMessage.match(cityPattern);
+      if (cityMatch) {
+        userInfo.city = cityMatch[0].charAt(0).toUpperCase() + cityMatch[0].slice(1).toLowerCase();
       }
-    } else {
-      // Database is available, proceed with normal flow
-      // If we have enough user info, perform database query
-      if (userInfo.name && userInfo.city && userInfo.lookingFor) {
-        try {
-          // If we have a nearby location preference, use it for filtering
-          if (userInfo.nearbyLocation && !userInfo.hasQueriedWithNearby) {
-            // Mark that we've queried with nearby location to avoid repetitive queries
-            userInfo.hasQueriedWithNearby = true;
-            const listings = await queryDatabaseWithNearbyLocation(userInfo);
-            responseText = await generateResponseWithListings(chat, lastMessage, userInfo, listings);
-          } else {
-            // Regular query without nearby location filter
-            const listings = await queryDatabase(userInfo);
-            
-            // If this is the first time showing results and we have results, ask about nearby location
-            if (!userInfo.hasShownResults && listings.length > 0) {
-              userInfo.hasShownResults = true;
-              responseText = await generateResponseWithListings(chat, lastMessage, userInfo, listings);
-              responseText += `\n\nIs there a specific area or landmark you'd like to be near in ${userInfo.city}? For example, a college, workplace, or market?`;
-            } else {
-              responseText = await generateResponseWithListings(chat, lastMessage, userInfo, listings);
-            }
-          }
-        } catch (dbError) {
-          console.error('Database query error:', dbError);
-          
-          // Fallback to mock data
-          const mockListings = getMockListings(userInfo);
-          responseText = await generateResponseWithListings(chat, lastMessage, userInfo, mockListings);
-          responseText = "I'm experiencing some technical difficulties with our database, but I can still help you with some sample listings. " + responseText;
-        }
-      } else {
-        // Continue the normal conversation flow
-        const result = await chat.sendMessage(lastMessage);
-        const response = await result.response;
-        responseText = response.text();
+    }
+    
+    // Try to extract accommodation type from the message if not already known
+    if (!userInfo.lookingFor) {
+      if (lastUserMessage.includes("hostel")) userInfo.lookingFor = "hostel";
+      else if (lastUserMessage.includes("pg") || lastUserMessage.includes("paying guest")) userInfo.lookingFor = "PG";
+      else if (lastUserMessage.includes("flat") || lastUserMessage.includes("apartment")) userInfo.lookingFor = "flat";
+      else if (lastUserMessage.includes("mess") || lastUserMessage.includes("food")) userInfo.lookingFor = "mess";
+    }
+    
+    // Check for nearby location in the message
+    if (lastUserMessage.includes("near") || lastUserMessage.includes("close to") || lastUserMessage.includes("nearby") || lastUserMessage.includes("around")) {
+      userInfo.nearbyLocation = extractNearbyLocationFromMessage(lastUserMessage);
+    }
+    
+    // If we have city but no accommodation type, default to hostel
+    if (userInfo.city && !userInfo.lookingFor) {
+      userInfo.lookingFor = "hostel";
+    }
+    
+    // If we have enough info to search, do it immediately
+    if (userInfo.city && userInfo.lookingFor) {
+      try {
+        let listings;
         
-        // Guide conversation if we're missing info
-        if (messages.length <= 2) {
-          responseText = "Hi there! I'd like to help you find the perfect accommodation. Could you please tell me your name?";
-        } else if (!userInfo.name) {
-          responseText = "Great! What's your name so I can personalize your experience?";
-        } else if (!userInfo.lookingFor) {
-          responseText = `Thanks, ${userInfo.name}! What type of accommodation are you looking for? (hostel, PG, flat, or mess)`;
-        } else if (!userInfo.city) {
-          responseText = `Excellent, ${userInfo.name}! In which city are you looking for ${userInfo.lookingFor}?`;
-        } else if (lastMessage.toLowerCase().includes("near") || 
-                  lastMessage.toLowerCase().includes("close to") || 
-                  lastMessage.includes("nearby")) {
-          // User is asking about a specific nearby location
-          const nearbyLocation = extractNearbyLocationFromMessage(lastMessage);
-          if (nearbyLocation) {
-            userInfo.nearbyLocation = nearbyLocation;
-            try {
-              const listings = await queryDatabaseWithNearbyLocation(userInfo);
-              responseText = await generateResponseWithListings(chat, lastMessage, userInfo, listings, true);
-            } catch (dbError) {
-              console.error('Database query error:', dbError);
-              
-              // Fallback to mock data
-              const mockListings = getMockListings(userInfo, nearbyLocation);
-              responseText = await generateResponseWithListings(chat, lastMessage, userInfo, mockListings, true);
-              responseText = "I'm experiencing some technical difficulties with our database, but I can still help you with some sample listings. " + responseText;
-            }
-          } else {
-            responseText = `Could you please specify which location in ${userInfo.city} you'd like to be near?`;
-          }
+        if (userInfo.nearbyLocation) {
+          listings = await queryDatabaseWithNearbyLocation(userInfo);
+        } else {
+          listings = await queryDatabase(userInfo);
         }
+        
+        responseText = await generateResponseWithListings(chat, lastMessage, userInfo, listings);
+      } catch (dbError) {
+        console.error('Database query error:', dbError);
+        responseText = "I'm experiencing some technical difficulties with our database. Please try again later or contact our support team for assistance.";
       }
+    } else if (userInfo.lookingFor && !userInfo.city) {
+      // If we know what they're looking for but not where
+      responseText = `Great! In which city are you looking for ${userInfo.lookingFor}?`;
+    } else if (!userInfo.lookingFor && !userInfo.city) {
+      // If we don't know either
+      responseText = "Please tell me what type of accommodation (hostel, PG, flat, or mess) you're looking for and in which city.";
     }
 
     // Return the response
@@ -316,45 +196,6 @@ export async function POST(request) {
   }
 }
 
-// Get mock listings based on user preferences
-function getMockListings(userInfo, nearbyLocation = null) {
-  const type = userInfo.lookingFor.toLowerCase();
-  let listings = MOCK_LISTINGS[type] || [];
-  
-  // Filter by city if provided
-  if (userInfo.city) {
-    listings = listings.filter(listing => 
-      listing.city.toLowerCase() === userInfo.city.toLowerCase()
-    );
-  }
-  
-  // Filter by nearby location if provided
-  if (nearbyLocation) {
-    listings = listings.filter(listing => 
-      listing.nearbyLocations.some(loc => 
-        loc.toLowerCase().includes(nearbyLocation.toLowerCase())
-      )
-    );
-  }
-  
-  // If no matches, return all listings of that type
-  if (listings.length === 0) {
-    listings = MOCK_LISTINGS[type] || [];
-    
-    // If still no listings, return first mock listing from any type
-    if (listings.length === 0) {
-      for (const typeKey in MOCK_LISTINGS) {
-        if (MOCK_LISTINGS[typeKey].length > 0) {
-          listings = [MOCK_LISTINGS[typeKey][0]];
-          break;
-        }
-      }
-    }
-  }
-  
-  return listings;
-}
-
 // Helper function to extract user information from conversation
 function extractUserInfo(messages) {
   const userInfo = {
@@ -363,12 +204,65 @@ function extractUserInfo(messages) {
     city: null,
     nearbyLocation: null,
     hasShownResults: false,
-    hasQueriedWithNearby: false
+    budget: null,
+    amenities: []
   };
   
   // Skip the system message at index 0 if it exists
   const startIndex = messages[0]?.role === 'system' ? 1 : 0;
   
+  // First pass: Direct extraction from user messages
+  for (let i = startIndex; i < messages.length; i++) {
+    if (messages[i].role === 'user') {
+      const content = messages[i].content.toLowerCase();
+      
+      // Extract accommodation type
+      if (!userInfo.lookingFor) {
+        if (content.includes("hostel")) userInfo.lookingFor = "hostel";
+        else if (content.includes(" pg ") || content.includes("paying guest")) userInfo.lookingFor = "PG";
+        else if (content.includes("flat") || content.includes("apartment")) userInfo.lookingFor = "flat";
+        else if (content.includes("mess") || content.includes("food")) userInfo.lookingFor = "mess";
+      }
+      
+      // Extract city names
+      if (!userInfo.city) {
+        const cityPattern = /\b(mumbai|delhi|bangalore|pune|hyderabad|chennai|kolkata|ahmedabad|jaipur|surat|lucknow|kanpur|nagpur|indore|thane|bhopal|coimbatore|kochi)\b/i;
+        const cityMatch = content.match(cityPattern);
+        if (cityMatch) {
+          userInfo.city = cityMatch[0].charAt(0).toUpperCase() + cityMatch[0].slice(1).toLowerCase();
+        }
+      }
+      
+      // Extract budget information
+      if (!userInfo.budget) {
+        const budgetPattern = /(\d{4,6})\s*(rs|rupees|₹|inr)?/i;
+        const budgetMatch = content.match(budgetPattern);
+        if (budgetMatch && parseInt(budgetMatch[1]) >= 1000) {
+          userInfo.budget = parseInt(budgetMatch[1]);
+        }
+      }
+      
+      // Extract amenities preferences
+      const commonAmenities = [
+        "wifi", "ac", "food", "laundry", "parking", "security", "gym", 
+        "tv", "fridge", "washing machine", "geyser", "water", "electricity", 
+        "furniture", "attached bathroom", "balcony"
+      ];
+      
+      commonAmenities.forEach(amenity => {
+        if (content.includes(amenity) && !userInfo.amenities.includes(amenity)) {
+          userInfo.amenities.push(amenity);
+        }
+      });
+      
+      // Check for nearby location mentions
+      if ((content.includes("near") || content.includes("close to") || content.includes("nearby") || content.includes("around")) && !userInfo.nearbyLocation) {
+        userInfo.nearbyLocation = extractNearbyLocationFromMessage(content);
+      }
+    }
+  }
+  
+  // Second pass: Context-based extraction from conversation flow
   for (let i = startIndex; i < messages.length; i++) {
     const message = messages[i];
     
@@ -378,22 +272,33 @@ function extractUserInfo(messages) {
       
       // Check if the assistant asked for the user's name
       if (content.includes("name") && content.includes("?") && i + 1 < messages.length && messages[i + 1].role === 'user') {
-        userInfo.name = messages[i + 1].content.trim().split(' ')[0]; // Get first word as name
+        const userResponse = messages[i + 1].content.trim();
+        // Extract first word as name, but ensure it's not a sentence
+        const possibleName = userResponse.split(' ')[0].replace(/[^\w\s]/gi, '');
+        if (possibleName.length > 1 && possibleName.length < 20) {
+          userInfo.name = possibleName.charAt(0).toUpperCase() + possibleName.slice(1);
+        }
       }
       
       // Check if the assistant asked what the user is looking for
-      if ((content.includes("what") && content.includes("looking for") && content.includes("?")) && 
-          i + 1 < messages.length && messages[i + 1].role === 'user') {
+      if ((content.includes("looking for") || content.includes("type of") || content.includes("accommodation")) && 
+          content.includes("?") && i + 1 < messages.length && messages[i + 1].role === 'user') {
         const nextMessage = messages[i + 1].content.toLowerCase();
         if (nextMessage.includes("hostel")) userInfo.lookingFor = "hostel";
-        else if (nextMessage.includes("pg")) userInfo.lookingFor = "PG";
-        else if (nextMessage.includes("flat")) userInfo.lookingFor = "flat";
+        else if (nextMessage.includes("pg") || nextMessage.includes("paying guest")) userInfo.lookingFor = "PG";
+        else if (nextMessage.includes("flat") || nextMessage.includes("apartment")) userInfo.lookingFor = "flat";
         else if (nextMessage.includes("mess")) userInfo.lookingFor = "mess";
       }
       
       // Check if the assistant asked about the city
-      if ((content.includes("which city") || content.includes("what city")) && i + 1 < messages.length && messages[i + 1].role === 'user') {
+      if ((content.includes("which city") || content.includes("what city") || content.includes("in which city")) && 
+          i + 1 < messages.length && messages[i + 1].role === 'user') {
         userInfo.city = messages[i + 1].content.trim();
+        // Clean up city name
+        userInfo.city = userInfo.city.replace(/[^\w\s]/gi, '').replace(/^in /i, '').trim();
+        if (userInfo.city.length > 0) {
+          userInfo.city = userInfo.city.charAt(0).toUpperCase() + userInfo.city.slice(1).toLowerCase();
+        }
       }
       
       // Check if the assistant asked about nearby location preference
@@ -403,39 +308,19 @@ function extractUserInfo(messages) {
       }
       
       // Check if results have already been shown
-      if (content.includes("here are the details") || content.includes("found") && content.includes("listings")) {
+      if (content.includes("found") && (content.includes("listings") || content.includes("results"))) {
         userInfo.hasShownResults = true;
       }
     }
-    
-    // Also check user messages for direct mentions of preferences
-    if (message.role === 'user') {
-      const content = message.content.toLowerCase();
-      
-      // Look for direct mentions of accommodation types
-      if (!userInfo.lookingFor) {
-        if (content.includes("hostel")) userInfo.lookingFor = "hostel";
-        else if (content.includes("pg")) userInfo.lookingFor = "PG";
-        else if (content.includes("flat")) userInfo.lookingFor = "flat";
-        else if (content.includes("mess")) userInfo.lookingFor = "mess";
-      }
-      
-      // Look for direct mentions of cities
-      if (!userInfo.city) {
-        const commonCities = ['mumbai', 'delhi', 'bangalore', 'pune', 'hyderabad', 'chennai'];
-        for (const city of commonCities) {
-          if (content.includes(city)) {
-            userInfo.city = city.charAt(0).toUpperCase() + city.slice(1); // Capitalize first letter
-            break;
-          }
-        }
-      }
-      
-      // Check for nearby location mentions
-      if ((content.includes("near") || content.includes("close to") || content.includes("nearby")) && !userInfo.nearbyLocation) {
-        userInfo.nearbyLocation = extractNearbyLocationFromMessage(content);
-      }
-    }
+  }
+  
+  // Clean up and validate extracted information
+  if (userInfo.name && userInfo.name.length > 20) {
+    userInfo.name = userInfo.name.substring(0, 20);
+  }
+  
+  if (userInfo.city && userInfo.city.length > 30) {
+    userInfo.city = userInfo.city.substring(0, 30);
   }
   
   return userInfo;
@@ -449,10 +334,12 @@ function extractNearbyLocationFromMessage(message) {
   
   // Common patterns for nearby location mentions
   const nearbyPatterns = [
-    /near\s+([a-z\s]+)(?:\.|\?|!|$)/i,
-    /close to\s+([a-z\s]+)(?:\.|\?|!|$)/i,
-    /nearby\s+([a-z\s]+)(?:\.|\?|!|$)/i,
-    /around\s+([a-z\s]+)(?:\.|\?|!|$)/i
+    /near\s+([a-z0-9\s]+)(?:\.|\?|!|$)/i,
+    /close to\s+([a-z0-9\s]+)(?:\.|\?|!|$)/i,
+    /nearby\s+([a-z0-9\s]+)(?:\.|\?|!|$)/i,
+    /around\s+([a-z0-9\s]+)(?:\.|\?|!|$)/i,
+    /in\s+([a-z0-9\s]+)\s+area/i,
+    /at\s+([a-z0-9\s]+)(?:\.|\?|!|$)/i
   ];
   
   for (const pattern of nearbyPatterns) {
@@ -482,10 +369,6 @@ function extractNearbyLocationFromMessage(message) {
 // Helper function to query the database based on user preferences
 async function queryDatabase(userInfo) {
   try {
-    if (!isPrismaAvailable) {
-      return getMockListings(userInfo);
-    }
-    
     // Convert type for database query
     const type = userInfo.lookingFor.toLowerCase() === 'pg' ? 'pg' : userInfo.lookingFor.toLowerCase();
     
@@ -494,49 +377,154 @@ async function queryDatabase(userInfo) {
       setTimeout(() => reject(new Error('Database query timeout')), 5000)
     );
     
+    // Build the query with all available filters
+    let whereClause = {
+      type: {
+        contains: type,
+        mode: 'insensitive'
+      },
+      city: {
+        contains: userInfo.city,
+        mode: 'insensitive'
+      }
+    };
+    
+    // Add budget filter if provided
+    if (userInfo.budget) {
+      whereClause.price = {
+        lte: userInfo.budget
+      };
+    }
+    
+    // Add amenities filter if provided
+    if (userInfo.amenities && userInfo.amenities.length > 0) {
+      whereClause.amenities = {
+        hasSome: userInfo.amenities
+      };
+    }
+    
     // Actual query
     const queryPromise = prisma.listing.findMany({
-      where: {
-        type: {
-          contains: type,
-          mode: 'insensitive'
-        },
-        city: {
-          contains: userInfo.city,
-          mode: 'insensitive'
-        }
-      },
+      where: whereClause,
       take: 5, // Limit to 5 results
       orderBy: {
         createdAt: 'desc' // Get newest listings first
       }
-    }).catch(error => {
-      console.error('Prisma query error:', error);
-      return getMockListings(userInfo);
     });
     
     // Race between timeout and query
-    const listings = await Promise.race([queryPromise, timeoutPromise])
-      .catch(error => {
-        console.error('Query race error:', error);
-        return getMockListings(userInfo);
+    let listings = await Promise.race([queryPromise, timeoutPromise]);
+    
+    // If no exact matches found, try a series of more flexible searches
+    if (listings.length === 0) {
+      console.log('No exact matches found, trying more flexible searches');
+      
+      // Try 1: Partial match on city name (instead of search operator)
+      const cityPartialMatchQuery = prisma.listing.findMany({
+        where: {
+          type: {
+            contains: type,
+            mode: 'insensitive'
+          },
+          city: {
+            contains: userInfo.city.substring(0, Math.max(3, Math.floor(userInfo.city.length * 0.7))), // Use first 70% of the city name
+            mode: 'insensitive'
+          }
+        },
+        take: 5,
+        orderBy: {
+          createdAt: 'desc'
+        }
       });
+      
+      try {
+        listings = await Promise.race([cityPartialMatchQuery, timeoutPromise]);
+      } catch (error) {
+        console.error('City partial match search failed:', error);
+      }
+      
+      // Try 2: If still no results, try with just the type
+      if (listings.length === 0) {
+        const typeOnlyQueryPromise = prisma.listing.findMany({
+          where: {
+            type: {
+              contains: type,
+              mode: 'insensitive'
+            }
+          },
+          take: 5,
+          orderBy: {
+            createdAt: 'desc'
+          }
+        });
+        
+        listings = await Promise.race([typeOnlyQueryPromise, timeoutPromise]);
+      }
+      
+      // Try 3: If still no results, try with similar accommodation types
+      if (listings.length === 0) {
+        const similarTypes = getSimilarTypes(type);
+        if (similarTypes.length > 0) {
+          const similarTypeQueryPromise = prisma.listing.findMany({
+            where: {
+              type: {
+                in: similarTypes,
+                mode: 'insensitive'
+              },
+              city: {
+                contains: userInfo.city,
+                mode: 'insensitive'
+              }
+            },
+            take: 5,
+            orderBy: {
+              createdAt: 'desc'
+            }
+          });
+          
+          listings = await Promise.race([similarTypeQueryPromise, timeoutPromise]);
+        }
+      }
+      
+      // Try 4: Last resort - get any recent listings
+      if (listings.length === 0) {
+        const anyListingsQueryPromise = prisma.listing.findMany({
+          take: 5,
+          orderBy: {
+            createdAt: 'desc'
+          }
+        });
+        
+        listings = await Promise.race([anyListingsQueryPromise, timeoutPromise]);
+      }
+    }
     
     return listings;
   } catch (error) {
     console.error('Database query error:', error);
-    // Return mock listings instead of throwing error
-    return getMockListings(userInfo);
+    throw error;
+  }
+}
+
+// Helper function to get similar accommodation types
+function getSimilarTypes(type) {
+  switch(type.toLowerCase()) {
+    case 'hostel':
+      return ['pg', 'dormitory'];
+    case 'pg':
+      return ['hostel', 'flat'];
+    case 'flat':
+      return ['apartment', 'pg'];
+    case 'mess':
+      return ['canteen', 'tiffin'];
+    default:
+      return [];
   }
 }
 
 // Helper function to query the database with nearby location filter
 async function queryDatabaseWithNearbyLocation(userInfo) {
   try {
-    if (!isPrismaAvailable) {
-      return getMockListings(userInfo, userInfo.nearbyLocation);
-    }
-    
     // Convert type for database query
     const type = userInfo.lookingFor.toLowerCase() === 'pg' ? 'pg' : userInfo.lookingFor.toLowerCase();
     
@@ -556,30 +544,45 @@ async function queryDatabaseWithNearbyLocation(userInfo) {
           contains: userInfo.city,
           mode: 'insensitive'
         },
-        nearbyLocations: {
-          hasSome: [userInfo.nearbyLocation]
-        }
+        OR: [
+          {
+            nearbyLocations: {
+              hasSome: [userInfo.nearbyLocation]
+            }
+          },
+          {
+            address: {
+              contains: userInfo.nearbyLocation,
+              mode: 'insensitive'
+            }
+          },
+          {
+            location: {
+              contains: userInfo.nearbyLocation,
+              mode: 'insensitive'
+            }
+          },
+          {
+            description: {
+              contains: userInfo.nearbyLocation,
+              mode: 'insensitive'
+            }
+          }
+        ]
       },
       take: 5, // Limit to 5 results
       orderBy: {
         createdAt: 'desc' // Get newest listings first
       }
-    }).catch(error => {
-      console.error('Prisma nearby query error:', error);
-      return [];
     });
     
     // Race between timeout and query
-    let listings = await Promise.race([queryPromise, timeoutPromise])
-      .catch(error => {
-        console.error('Nearby query race error:', error);
-        return [];
-      });
+    let listings = await Promise.race([queryPromise, timeoutPromise]);
     
     // If no exact matches, try a more flexible search
     if (listings.length === 0) {
-      // Try to find listings with similar nearby locations
-      const flexibleQueryPromise = prisma.listing.findMany({
+      // Try with a more flexible location match
+      const flexibleLocationQueryPromise = prisma.listing.findMany({
         where: {
           type: {
             contains: type,
@@ -588,28 +591,15 @@ async function queryDatabaseWithNearbyLocation(userInfo) {
           city: {
             contains: userInfo.city,
             mode: 'insensitive'
-          },
-          nearbyLocations: {
-            some: {
-              contains: userInfo.nearbyLocation,
-              mode: 'insensitive'
-            }
           }
         },
         take: 5,
         orderBy: {
           createdAt: 'desc'
         }
-      }).catch(error => {
-        console.error('Prisma flexible nearby query error:', error);
-        return [];
       });
       
-      listings = await Promise.race([flexibleQueryPromise, timeoutPromise])
-        .catch(error => {
-          console.error('Flexible nearby query race error:', error);
-          return [];
-        });
+      listings = await Promise.race([flexibleLocationQueryPromise, timeoutPromise]);
       
       // If still no results, fall back to regular search
       if (listings.length === 0) {
@@ -621,31 +611,26 @@ async function queryDatabaseWithNearbyLocation(userInfo) {
   } catch (error) {
     console.error('Database query error with nearby location:', error);
     // Fall back to regular query
-    try {
-      return await queryDatabase(userInfo);
-    } catch (fallbackError) {
-      // Return mock listings if all queries fail
-      return getMockListings(userInfo, userInfo.nearbyLocation);
-    }
+    return await queryDatabase(userInfo);
   }
 }
 
 // Helper function to generate a response with listings data
-async function generateResponseWithListings(chat, lastMessage, userInfo, listings, isNearbyQuery = false) {
+async function generateResponseWithListings(chat, lastMessage, userInfo, listings) {
   if (!listings || listings.length === 0) {
-    if (isNearbyQuery) {
-      return `I'm sorry, ${userInfo.name}. I couldn't find any ${userInfo.lookingFor} listings in ${userInfo.city} near ${userInfo.nearbyLocation}. Would you like to see listings without the location filter?`;
+    if (userInfo.nearbyLocation) {
+      return `I'm sorry, ${userInfo.name}. I couldn't find any ${userInfo.lookingFor} listings in ${userInfo.city} near ${userInfo.nearbyLocation}. Would you like to see listings without the location filter? Or perhaps try a different area?`;
     }
-    return `I'm sorry, ${userInfo.name}. I couldn't find any ${userInfo.lookingFor} listings in ${userInfo.city}. Would you like to try a different accommodation type or city?`;
+    return `I'm sorry, ${userInfo.name}. I couldn't find any ${userInfo.lookingFor} listings in ${userInfo.city}. Would you like to try a different accommodation type or city? We have listings for hostels, PGs, flats, and mess facilities in various cities.`;
   }
   
   // Format listings into a nice message
   let listingsText = "";
   
-  if (isNearbyQuery) {
-    listingsText = `Great news, ${userInfo.name}! I found ${listings.length} ${userInfo.lookingFor} listings in ${userInfo.city} near ${userInfo.nearbyLocation}. Here are the details:\n\n`;
+  if (userInfo.nearbyLocation) {
+    listingsText = `Great news, ${userInfo.name || "there"}! I found ${listings.length} ${userInfo.lookingFor} listings in ${userInfo.city} near ${userInfo.nearbyLocation}:\n\n`;
   } else {
-    listingsText = `Great news, ${userInfo.name}! I found ${listings.length} ${userInfo.lookingFor} listings in ${userInfo.city}. Here are the details:\n\n`;
+    listingsText = `Great news, ${userInfo.name || "there"}! I found ${listings.length} ${userInfo.lookingFor} listings in ${userInfo.city}:\n\n`;
   }
   
   listings.forEach((listing, index) => {
@@ -653,7 +638,7 @@ async function generateResponseWithListings(chat, lastMessage, userInfo, listing
     listingsText += `📍 ${listing.address}\n`;
     listingsText += `💰 ₹${listing.price.toLocaleString()} per month\n`;
     
-    // Add nearby locations
+    // Add nearby locations if available
     if (listing.nearbyLocations && listing.nearbyLocations.length > 0) {
       listingsText += `🏙️ Nearby: ${listing.nearbyLocations.join(', ')}\n`;
     }
@@ -666,22 +651,14 @@ async function generateResponseWithListings(chat, lastMessage, userInfo, listing
     listingsText += `📞 Contact: ${listing.contactName} (${listing.contactPhone})\n\n`;
   });
   
-  if (!isNearbyQuery && !userInfo.hasQueriedWithNearby) {
-    listingsText += `Would you like more information about any of these options, ${userInfo.name}? Or would you prefer to see listings near a specific location in ${userInfo.city}?`;
+  if (!userInfo.hasShownResults && !userInfo.nearbyLocation) {
+    listingsText += `Would you like more information about any of these options, ${userInfo.name || "there"}? Or would you prefer to see listings near a specific location in ${userInfo.city}?`;
   } else {
-    listingsText += `Would you like more information about any of these options, ${userInfo.name}?`;
+    listingsText += `Would you like more information about any of these options, ${userInfo.name || "there"}? You can also search for different accommodation types or in other areas.`;
   }
   
-  try {
-    // Send this formatted text to the model to generate a polished response
-    const result = await chat.sendMessage(lastMessage + "\n\n" + listingsText);
-    const response = await result.response;
-    return response.text();
-  } catch (error) {
-    // If model fails, return the raw listings text
-    console.error('Error generating polished response:', error);
-    return listingsText;
-  }
+  // Return the formatted listings directly without sending to Gemini
+  return listingsText;
 }
 
 // Helper function to format messages for Gemini API

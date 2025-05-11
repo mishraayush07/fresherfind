@@ -33,15 +33,66 @@ export default function ChatBot() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
+  // Function to correct common spelling mistakes in user input
+  const correctSpellingMistakes = (text) => {
+    // Common misspellings and their corrections
+    const corrections = {
+      'hostl': 'hostel',
+      'hostels': 'hostel',
+      'hostle': 'hostel',
+      'hotle': 'hostel',
+      'hotl': 'hostel',
+      'hotell': 'hostel',
+      'hotl': 'hostel',
+      'pgg': 'pg',
+      'pgs': 'pg',
+      'paying gust': 'paying guest',
+      'flats': 'flat',
+      'appartment': 'apartment',
+      'appartments': 'apartment',
+      'apartments': 'apartment',
+      'flatt': 'flat',
+      'mess': 'mess',
+      'messes': 'mess',
+      'accomodation': 'accommodation',
+      'acommodation': 'accommodation',
+      'acomodation': 'accommodation',
+      'dlehi': 'delhi',
+      'dlhi': 'delhi',
+      'mumbaii': 'mumbai',
+      'bombay': 'mumbai',
+      'banglore': 'bangalore',
+      'bangalor': 'bangalore',
+      'bangaluru': 'bangalore',
+      'hydrabd': 'hyderabad',
+      'hydrabad': 'hyderabad',
+      'chenai': 'chennai',
+      'chenni': 'chennai',
+      'pun': 'pune',
+      'poona': 'pune',
+      'kolkatta': 'kolkata',
+      'calcutta': 'kolkata'
+    };
+    
+    // Split the text into words and correct each word if needed
+    return text.split(' ').map(word => {
+      const lowercaseWord = word.toLowerCase();
+      return corrections[lowercaseWord] || word;
+    }).join(' ');
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     
     if (!input.trim()) return;
     
-    const userMessage = { role: 'user', content: input };
+    // Apply spelling corrections to user input
+    const correctedInput = correctSpellingMistakes(input);
     
-    // Update UI immediately with user message
-    setMessages((prevMessages) => [...prevMessages, userMessage]);
+    const userMessage = { role: 'user', content: correctedInput };
+    
+    // Update UI immediately with user message (show original input, not corrected)
+    setMessages((prevMessages) => [...prevMessages, { role: 'user', content: input }]);
     setInput('');
     setIsLoading(true);
     setError(null);
@@ -50,7 +101,9 @@ export default function ChatBot() {
       // Prepare the messages for the API
       const apiMessages = [
         { role: 'system', content: 'You are a helpful assistant for a city-listing website. You can help users find accommodation, answer questions about listings, and provide information about different areas.' },
-        ...messages,
+        ...messages.map(msg => 
+          msg.role === 'user' ? { ...msg, content: correctSpellingMistakes(msg.content) } : msg
+        ),
         userMessage
       ];
       
@@ -127,8 +180,10 @@ export default function ChatBot() {
   const updateChatState = (assistantContent) => {
     if (messages.length <= 2) {
       setChatState("collecting-info");
-    } else if (assistantContent.includes("Here are the details:") || 
-              (assistantContent.includes("found") && assistantContent.includes("listings"))) {
+    } else if (assistantContent.includes("found") && 
+              (assistantContent.includes("listings") || assistantContent.includes("hostel") || 
+               assistantContent.includes("PG") || assistantContent.includes("flat") || 
+               assistantContent.includes("mess"))) {
       setChatState("showing-results");
     } else if (assistantContent.includes("specific area") || 
               assistantContent.includes("landmark") || 
@@ -143,48 +198,87 @@ export default function ChatBot() {
     }
   };
 
-  // Format message content with Markdown-like syntax
+  // Format message content with proper HTML formatting
   const formatMessageContent = (content) => {
     // Check if this is a listing result message
-    if (content.includes("**") && content.includes("Here are the details:")) {
+    if ((content.includes("**") && content.includes("found")) || 
+        (content.includes("found") && content.includes("listings"))) {
+      // Parse and format the listing results
       return (
         <div className="listing-results">
           {content.split('\n\n').map((paragraph, idx) => {
             // Check if this paragraph is a listing item
             if (paragraph.startsWith('**')) {
               const lines = paragraph.split('\n');
+              // Extract title (remove ** markers)
               const title = lines[0].replace(/\*\*/g, '');
               
               return (
-                <div key={idx} className="listing-item p-3 mb-3 bg-white rounded-lg shadow-sm border border-gray-100">
-                  <h4 className="font-bold text-blue-700">{title}</h4>
-                  {lines.slice(1).map((line, lineIdx) => {
-                    if (line.includes('📍')) {
-                      return <p key={lineIdx} className="text-gray-700">{line}</p>;
-                    } else if (line.includes('💰')) {
-                      return <p key={lineIdx} className="font-semibold text-green-700">{line}</p>;
-                    } else if (line.includes('✨')) {
-                      return <p key={lineIdx} className="text-gray-600">{line}</p>;
-                    } else if (line.includes('🏙️')) {
-                      return <p key={lineIdx} className="text-indigo-600 font-medium">{line}</p>;
-                    } else if (line.includes('📞')) {
-                      return <p key={lineIdx} className="text-blue-600">{line}</p>;
-                    } else {
-                      return <p key={lineIdx}>{line}</p>;
-                    }
-                  })}
+                <div key={idx} className="listing-item p-3 mb-3 bg-white rounded-lg shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+                  <h3 className="font-bold text-blue-700 text-lg mb-2">{title}</h3>
+                  <div className="space-y-1">
+                    {lines.slice(1).map((line, lineIdx) => {
+                      if (line.includes('📍')) {
+                        return <p key={lineIdx} className="text-gray-700 flex items-start">
+                          <span className="mr-2">📍</span>
+                          <span>{line.replace('📍', '')}</span>
+                        </p>;
+                      } else if (line.includes('💰')) {
+                        return <p key={lineIdx} className="font-semibold text-green-700 flex items-start">
+                          <span className="mr-2">💰</span>
+                          <span>{line.replace('💰', '')}</span>
+                        </p>;
+                      } else if (line.includes('✨')) {
+                        return <p key={lineIdx} className="text-gray-600 flex items-start">
+                          <span className="mr-2">✨</span>
+                          <span>{line.replace('✨', '')}</span>
+                        </p>;
+                      } else if (line.includes('🏙️')) {
+                        return <p key={lineIdx} className="text-indigo-600 font-medium flex items-start">
+                          <span className="mr-2">🏙️</span>
+                          <span>{line.replace('🏙️', '')}</span>
+                        </p>;
+                      } else if (line.includes('📞')) {
+                        return <p key={lineIdx} className="text-blue-600 flex items-start">
+                          <span className="mr-2">📞</span>
+                          <span>{line.replace('📞', '')}</span>
+                        </p>;
+                      } else {
+                        return <p key={lineIdx}>{line}</p>;
+                      }
+                    })}
+                  </div>
                 </div>
               );
             } else {
-              return <p key={idx} className="mb-2">{paragraph}</p>;
+              // Process regular paragraphs with markdown-like formatting
+              return <p key={idx} className="mb-2">{formatTextWithMarkdown(paragraph)}</p>;
             }
           })}
         </div>
       );
     }
     
-    // Regular message formatting
-    return <span>{content}</span>;
+    // Regular message formatting with markdown support
+    return <div className="message-content">{formatTextWithMarkdown(content)}</div>;
+  };
+
+  // Helper function to format text with markdown-like syntax
+  const formatTextWithMarkdown = (text) => {
+    if (!text) return '';
+    
+    // Format bold text (replace ** with <strong>)
+    let formattedText = text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+    
+    // Format paragraphs
+    formattedText = formattedText.split('\n\n').map(para => 
+      `<p>${para}</p>`
+    ).join('');
+    
+    // Format line breaks
+    formattedText = formattedText.replace(/\n/g, '<br>');
+    
+    return <span dangerouslySetInnerHTML={{ __html: formattedText }} />;
   };
 
   // Generate placeholder text based on chat state
@@ -193,7 +287,7 @@ export default function ChatBot() {
       case "initial":
         return "Hi! I'm looking for accommodation...";
       case "collecting-info":
-        return "Tell me your name, preferences, or city...";
+        return "Tell me your preferences or city...";
       case "asking-location":
         return "Enter a nearby location (university, landmark, etc.)...";
       case "showing-results":
@@ -221,7 +315,7 @@ export default function ChatBot() {
               d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" 
             />
           </svg>
-          Chat Assistant
+          Accommodation Finder
         </span>
         {chatState === "showing-results" && (
           <span className="text-xs bg-white text-blue-600 px-2 py-1 rounded-full">
@@ -234,7 +328,7 @@ export default function ChatBot() {
         {messages.length === 0 ? (
           <div className="text-center text-gray-600 py-8">
             <p className="mb-2 font-medium">👋 Hi there! How can I help you today?</p>
-            <p className="text-sm">Ask me anything about listings, accommodations, or neighborhoods!</p>
+            <p className="text-sm">Looking for a hostel, PG, flat or mess? Just tell me what you need and where!</p>
           </div>
         ) : (
           messages.map((message, index) => (
