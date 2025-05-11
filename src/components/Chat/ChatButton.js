@@ -36,6 +36,17 @@ export default function ChatButton() {
     };
   }, [isChatOpen]);
 
+  // Show tooltip after 3 seconds if chat hasn't been opened yet
+  useEffect(() => {
+    if (!isChatOpen) {
+      const tooltipTimer = setTimeout(() => {
+        setIsTooltipVisible(true);
+      }, 3000);
+      
+      return () => clearTimeout(tooltipTimer);
+    }
+  }, [isChatOpen]);
+
   const toggleChat = () => {
     setIsChatOpen(!isChatOpen);
     setIsTooltipVisible(false);
@@ -43,7 +54,7 @@ export default function ChatButton() {
 
   return (
     <>
-      <div className="fixed bottom-18 right-6 z-50">
+      <div className="fixed bottom-6 right-6 z-50">
         {isTooltipVisible && !isChatOpen && (
           <div className="absolute bottom-16 right-0 bg-white p-3 rounded-lg shadow-lg text-gray-700 text-sm w-48 mb-2 animate-fade-in">
             Need help? Chat with our AI assistant!
@@ -53,7 +64,7 @@ export default function ChatButton() {
         
         <button 
           onClick={toggleChat}
-          className="flex items-center justify-center w-14 h-14 bg-blue-600 rounded-full shadow-lg hover:bg-blue-700 transition-colors text-white"
+          className="flex items-center justify-center w-14 h-14 bg-blue-600 rounded-full shadow-lg hover:bg-blue-700 transition-colors text-white focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-opacity-50"
           onMouseEnter={() => !isChatOpen && setIsTooltipVisible(true)}
           onMouseLeave={() => setIsTooltipVisible(false)}
           aria-label="Chat with AI assistant"
@@ -93,13 +104,16 @@ export default function ChatButton() {
       </div>
 
       {isChatOpen && (
-        <div className="fixed inset-0 md:inset-auto md:bottom-24 md:right-6 z-40 flex items-end md:items-end justify-center md:justify-end" onClick={(e) => {
-          // Close if clicking the overlay area (not the chat container)
-          if (e.target === e.currentTarget) {
-            toggleChat();
-          }
-        }}>
-          <div className="relative w-full md:w-96 h-[500px] md:h-[450px] max-h-[80vh] md:max-h-[600px]">
+        <div 
+          className="fixed inset-0 bg-black/20 backdrop-blur-sm md:inset-auto md:bottom-24 md:right-6 z-40 flex items-end md:items-end justify-center md:justify-end" 
+          onClick={(e) => {
+            // Close if clicking the overlay area (not the chat container)
+            if (e.target === e.currentTarget) {
+              toggleChat();
+            }
+          }}
+        >
+          <div className="relative w-full md:w-96 h-[500px] md:h-[450px] max-h-[90vh] md:max-h-[600px] animate-slide-up md:animate-slide-in">
             <ChatBot />
           </div>
         </div>

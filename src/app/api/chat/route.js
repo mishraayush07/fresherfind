@@ -65,6 +65,7 @@ export async function POST(request) {
 
     // Get the last user message
     const lastMessage = formattedMessages.length > 0 ? formattedMessages[formattedMessages.length - 1].parts[0].text : "";
+    console.log("Last user message:", lastMessage);
     
     // Extract user info and query parameters from conversation
     const userInfo = extractUserInfo(messages);
@@ -82,7 +83,22 @@ export async function POST(request) {
     
     // For first-time users, provide a welcome message
     if (messages.length <= 1) {
-      responseText = "Hi there! I'm your accommodation search assistant. I can help you find hostels, PGs, flats, and mess facilities. What type of accommodation are you looking for and in which city?";
+      try {
+        // Send direct message without history for first message
+        const result = await model.generateContent(
+          "You are a helpful accommodation search assistant. Respond with a friendly welcome message asking what type of accommodation they're looking for and in which city."
+        );
+        const response = await result.response;
+        responseText = response.text();
+      } catch (error) {
+        console.error('Error generating welcome message:', error);
+        responseText = "Hi there! I'm your accommodation search assistant. I can help you find hostels, PGs, flats, and mess facilities. What type of accommodation are you looking for and in which city?";
+      }
+      
+      // Fallback if Gemini fails
+      if (!responseText) {
+        responseText = "Hi there! I'm your accommodation search assistant. I can help you find hostels, PGs, flats, and mess facilities. What type of accommodation are you looking for and in which city?";
+      }
       
       return NextResponse.json({
         model: "gemini-1.5-flash-latest",
@@ -127,8 +143,77 @@ export async function POST(request) {
       userInfo.lookingFor = "hostel";
     }
     
-    // If we have enough info to search, do it immediately
-    if (userInfo.city && userInfo.lookingFor) {
+    // Detect if the query is specifically about listings or accommodation
+    const isListingQuery = userInfo.city && userInfo.lookingFor;
+    const isAboutAccommodation = lastUserMessage.includes("hostel") || 
+                               lastUserMessage.includes("pg") || 
+                               lastUserMessage.includes("flat") || 
+                               lastUserMessage.includes("apartment") || 
+                               lastUserMessage.includes("mess") ||
+                               lastUserMessage.includes("accommodation") ||
+                               lastUserMessage.includes("rent") ||
+                               lastUserMessage.includes("stay") ||
+                               lastUserMessage.includes("room") ||
+                               lastUserMessage.includes("house");
+    
+    // Check if this is a general question
+    const isGeneral = await isGeneralQuestion(chat, lastMessage);
+    console.log("Is general question:", isGeneral);
+    
+    // If it's a general question (not about accommodation), handle it differently
+    if (isGeneral) {
+      try {
+        // Direct approach without chat history for more reliable response
+        const result = await model.generateContent({
+          contents: [{ 
+            role: "user", 
+            parts: [{ 
+              text: `You are a helpful assistant focused on accommodation search. The user has asked: "${lastMessage}"\n\nThis is not about accommodation. Please briefly answer their question, then politely remind them that you're primarily designed to help with finding accommodation like hostels, PGs, flats, or mess facilities. Ask what type of accommodation they're looking for.` 
+            }]
+          }]
+        });
+        
+        const response = await result;
+        responseText = response.response.text();
+        console.log("Generated response for general question:", responseText);
+        
+        // If we got a valid response from Gemini
+        if (responseText && responseText.length > 20) {
+          return NextResponse.json({
+            model: "gemini-1.5-flash-latest",
+            choices: [
+              {
+                message: {
+                  role: "assistant",
+                  content: responseText,
+                },
+              },
+            ],
+          });
+        } else {
+          // Fallback if response is too short or empty
+          responseText = `I noticed you're asking about "${lastMessage}". While I can try to help with that, I'm primarily designed to assist you with finding accommodation like hostels, PGs, flats, or mess facilities. What type of accommodation are you looking for?`;
+        }
+      } catch (error) {
+        console.error('Gemini API error with general question:', error);
+        // Fallback if Gemini fails
+        responseText = `I see you're asking about "${lastMessage}". I'm your accommodation search assistant focused on helping you find hostels, PGs, flats, and mess facilities. What type of accommodation are you looking for and in which city?`;
+      }
+      
+      return NextResponse.json({
+        model: "gemini-1.5-flash-latest",
+        choices: [
+          {
+            message: {
+              role: "assistant",
+              content: responseText,
+            },
+          },
+        ],
+      });
+    }
+    // If we have enough info to search AND the query is about listings, do database search
+    else if (isListingQuery && isAboutAccommodation) {
       try {
         let listings;
         
@@ -141,14 +226,66 @@ export async function POST(request) {
         responseText = await generateResponseWithListings(chat, lastMessage, userInfo, listings);
       } catch (dbError) {
         console.error('Database query error:', dbError);
-        responseText = "I'm experiencing some technical difficulties with our database. Please try again later or contact our support team for assistance.";
+        
+        // If database query fails, fall back to Gemini AI
+        try {
+          const result = await model.generateContent({
+            contents: [{ 
+              role: "user", 
+              parts: [{ 
+                text: `You are a helpful accommodation search assistant. The user asked: "${lastMessage}"\n\nOur database is currently experiencing issues. Please inform the user about the technical difficulties but offer to assist in other ways.` 
+              }]
+            }]
+          });
+          
+          const response = await result;
+          responseText = response.response.text();
+        } catch (aiError) {
+          console.error('Gemini API error:', aiError);
+          responseText = "I'm experiencing some technical difficulties with our database. Please try again later or contact our support team for assistance.";
+        }
       }
     } else if (userInfo.lookingFor && !userInfo.city) {
-      // If we know what they're looking for but not where
-      responseText = `Great! In which city are you looking for ${userInfo.lookingFor}?`;
-    } else if (!userInfo.lookingFor && !userInfo.city) {
-      // If we don't know either
-      responseText = "Please tell me what type of accommodation (hostel, PG, flat, or mess) you're looking for and in which city.";
+      // If we know what they're looking for but not where, ask about city
+      try {
+        const result = await model.generateContent({
+          contents: [{ 
+            role: "user", 
+            parts: [{ 
+              text: `You are a helpful accommodation search assistant. The user asked: "${lastMessage}"\n\nI know they're looking for ${userInfo.lookingFor}, but I need to ask which city they're interested in. Generate a friendly response asking about the city.` 
+            }]
+          }]
+        });
+        
+        const response = await result;
+        responseText = response.response.text();
+        
+        // Fallback if Gemini doesn't generate a relevant response
+        if (!responseText || !responseText.toLowerCase().includes("city")) {
+          responseText = `Great! In which city are you looking for ${userInfo.lookingFor}?`;
+        }
+      } catch (error) {
+        console.error('Gemini API error:', error);
+        responseText = `Great! In which city are you looking for ${userInfo.lookingFor}?`;
+      }
+    } else {
+      // For general accommodation conversation, use Gemini AI
+      try {
+        const result = await model.generateContent({
+          contents: [{ 
+            role: "user", 
+            parts: [{ 
+              text: `You are a helpful accommodation search assistant for a website that helps users find hostels, PGs, flats, and mess facilities. The user asked: "${lastMessage}"\n\nRespond helpfully about accommodation. Ask about the type of accommodation they need and the city they're interested in if they haven't mentioned these.` 
+            }]
+          }]
+        });
+        
+        const response = await result;
+        responseText = response.response.text();
+      } catch (error) {
+        console.error('Gemini API error:', error);
+        responseText = "I'm here to help you find accommodation. Please let me know what type of accommodation you're looking for (hostel, PG, flat, or mess) and in which city.";
+      }
     }
 
     // Return the response
@@ -193,6 +330,75 @@ export async function POST(request) {
       },
       { status: statusCode }
     );
+  }
+}
+
+// Helper function to check if a message is a general question not related to accommodation
+async function isGeneralQuestion(chat, message) {
+  try {
+    // Keywords that indicate it's about accommodation
+    const accommodationKeywords = [
+      'hostel', 'pg', 'paying guest', 'flat', 'apartment', 'room', 'mess', 
+      'accommodation', 'rent', 'stay', 'living', 'housing', 'lodge'
+    ];
+    
+    // Check if any accommodation keywords are in the message
+    const containsAccommodationKeyword = accommodationKeywords.some(keyword => 
+      message.toLowerCase().includes(keyword)
+    );
+    
+    // If it clearly contains accommodation keywords, it's not a general question
+    if (containsAccommodationKeyword) {
+      return false;
+    }
+    
+    // These keywords almost always indicate a general question
+    const generalKeywords = [
+      'movie', 'film', 'cricket', 'sport', 'football', 'news', 'politics', 
+      'weather', 'song', 'music', 'actor', 'actress', 'celebrity', 'game',
+      'who is', 'what is', 'when is', 'why is', 'how to', 'best', 'worst',
+      'top', 'ranking', 'winner', 'box office', 'president', 'prime minister'
+    ];
+    
+    // If it contains general keywords, it's likely a general question
+    const containsGeneralKeyword = generalKeywords.some(keyword => 
+      message.toLowerCase().includes(keyword)
+    );
+    
+    if (containsGeneralKeyword) {
+      return true;
+    }
+    
+    // For ambiguous cases, try to use Gemini to classify
+    // But don't rely solely on this to avoid API issues
+    try {
+      // Use a simpler direct prompt to minimize tokens and complexity
+      const result = await chat.sendMessage({
+        role: "user",
+        parts: [{ text: `Is the query "${message}" about accommodation (hostels, PGs, rooms, housing) or something else? Respond with just one word: ACCOMMODATION or GENERAL.` }]
+      });
+      
+      const response = await result.response;
+      const text = response.text().trim().toUpperCase();
+      
+      // Only accept very clear classifications to avoid ambiguity
+      if (text === "GENERAL") {
+        return true;
+      } else if (text === "ACCOMMODATION") {
+        return false;
+      } else {
+        // If the response isn't clear, use our keyword-based classification
+        return false; // Default to accommodation-focused response
+      }
+    } catch (error) {
+      console.error('Error using Gemini for classification:', error);
+      // If the Gemini API call fails, use our keyword detection
+      return containsGeneralKeyword;
+    }
+  } catch (error) {
+    console.error('Error in isGeneralQuestion:', error);
+    // If there's any error, default to accommodation-focused response
+    return false;
   }
 }
 
@@ -379,14 +585,14 @@ async function queryDatabase(userInfo) {
     
     // Build the query with all available filters
     let whereClause = {
-      type: {
-        contains: type,
-        mode: 'insensitive'
-      },
-      city: {
-        contains: userInfo.city,
-        mode: 'insensitive'
-      }
+        type: {
+          contains: type,
+          mode: 'insensitive'
+        },
+        city: {
+          contains: userInfo.city,
+          mode: 'insensitive'
+        }
     };
     
     // Add budget filter if provided
@@ -546,9 +752,9 @@ async function queryDatabaseWithNearbyLocation(userInfo) {
         },
         OR: [
           {
-            nearbyLocations: {
-              hasSome: [userInfo.nearbyLocation]
-            }
+        nearbyLocations: {
+          hasSome: [userInfo.nearbyLocation]
+        }
           },
           {
             address: {
@@ -611,7 +817,7 @@ async function queryDatabaseWithNearbyLocation(userInfo) {
   } catch (error) {
     console.error('Database query error with nearby location:', error);
     // Fall back to regular query
-    return await queryDatabase(userInfo);
+      return await queryDatabase(userInfo);
   }
 }
 
@@ -619,9 +825,9 @@ async function queryDatabaseWithNearbyLocation(userInfo) {
 async function generateResponseWithListings(chat, lastMessage, userInfo, listings) {
   if (!listings || listings.length === 0) {
     if (userInfo.nearbyLocation) {
-      return `I'm sorry, ${userInfo.name}. I couldn't find any ${userInfo.lookingFor} listings in ${userInfo.city} near ${userInfo.nearbyLocation}. Would you like to see listings without the location filter? Or perhaps try a different area?`;
+      return `I'm sorry, ${userInfo.name || "there"}. I couldn't find any ${userInfo.lookingFor} listings in ${userInfo.city} near ${userInfo.nearbyLocation}. Would you like to see listings without the location filter? Or perhaps try a different area?`;
     }
-    return `I'm sorry, ${userInfo.name}. I couldn't find any ${userInfo.lookingFor} listings in ${userInfo.city}. Would you like to try a different accommodation type or city? We have listings for hostels, PGs, flats, and mess facilities in various cities.`;
+    return `I'm sorry, ${userInfo.name || "there"}. I couldn't find any ${userInfo.lookingFor} listings in ${userInfo.city}. Would you like to try a different accommodation type or city? We have listings for hostels, PGs, flats, and mess facilities in various cities.`;
   }
   
   // Format listings into a nice message
@@ -657,8 +863,32 @@ async function generateResponseWithListings(chat, lastMessage, userInfo, listing
     listingsText += `Would you like more information about any of these options, ${userInfo.name || "there"}? You can also search for different accommodation types or in other areas.`;
   }
   
-  // Return the formatted listings directly without sending to Gemini
-  return listingsText;
+  try {
+    // This system instruction helps Gemini understand the context
+    const systemInstruction = "You are an accommodation search assistant. The user is looking for accommodation.";
+    
+    // Send the listings to Gemini for enhancement and contextual understanding
+    const enhancedMessage = `${systemInstruction}\n\nI've found some listings to share with the user based on their search for ${userInfo.lookingFor} in ${userInfo.city}${userInfo.nearbyLocation ? ' near ' + userInfo.nearbyLocation : ''}. Here are the listings:\n\n${listingsText}\n\nPlease respond to the user's query: ${lastMessage}`;
+    
+    const result = await chat.sendMessage(enhancedMessage);
+    const response = await result.response;
+    const responseText = response.text();
+    
+    // Check if Gemini's response contains the listing information
+    // If not, default back to our formatted listings
+    if (responseText.includes('**1.') || 
+        (responseText.includes(userInfo.lookingFor) && 
+         responseText.includes(userInfo.city))) {
+      return responseText;
+    } else {
+      // If Gemini didn't include the listings in its response, use our formatted version
+      return listingsText;
+    }
+  } catch (error) {
+    console.error('Error generating response with Gemini:', error);
+    // Return our own formatted listings as fallback
+    return listingsText;
+  }
 }
 
 // Helper function to format messages for Gemini API

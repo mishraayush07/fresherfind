@@ -50,11 +50,11 @@ export default function LocationHeader() {
       </div>
 
       {/* Cities Scroll */}
-      <div className="overflow-x-auto pb-4">
-        <div className="flex space-x-4 px-4">
+      <div className="overflow-x-auto scrollbar-hide pb-4">
+        <div className="flex space-x-6 px-4 min-w-max mx-auto justify-center">
           {cities.map((city) => (
-            <div key={city.name} className="flex flex-col items-center space-y-2">
-              <div className="relative w-16 h-16 rounded-full overflow-hidden">
+            <div key={city.name} className="flex flex-col items-center space-y-2 w-20">
+              <div className="relative w-16 h-16 rounded-full overflow-hidden shadow-sm hover:shadow-md transition-shadow duration-300">
                 <Image
                   src={city.image}
                   alt={city.name}
@@ -62,7 +62,7 @@ export default function LocationHeader() {
                   className="object-cover"
                 />
               </div>
-              <span className="text-sm font-medium text-gray-700">{city.name}</span>
+              <span className="text-sm font-medium text-gray-700 text-center truncate w-full">{city.name}</span>
             </div>
           ))}
         </div>
