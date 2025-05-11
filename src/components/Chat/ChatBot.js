@@ -387,7 +387,7 @@ export default function ChatBot() {
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            className="flex-1 p-2 border rounded-l-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+            className="flex-1 p-2 border rounded-l-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white text-black"
             placeholder={getPlaceholderText()}
             disabled={isLoading}
           />
